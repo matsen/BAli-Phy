@@ -15,8 +15,9 @@ import qualified Data.IntSet as IntSet
 import           Data.Text (Text)
 
 import           Probability.Distribution.Tree.Util
-import           Probability.Distribution.Tree.Modifiable    
+import           Probability.Distribution.Tree.Modifiable
 import           Probability.Distribution.Tree.Moves
+import           Probability.Distribution.Gamma (gamma)
 
 -- Create a tree of size n-1, choose an edge at random, and insert the next leaf there.
 uniformTopologyEdges [l1]     _        = return []
@@ -76,6 +77,26 @@ instance Dist UniformTopology where
     type Result UniformTopology = Tree ()
     dist_name _ = "uniform_topology"
 
+-- Distribution for topology initialized to a specific structure
+-- but with uniform prior (for use with loaded initial trees)
+data UniformTopologyInitializedTo l = UniformTopologyInitializedTo (Tree l)
+
+instance Dist (UniformTopologyInitializedTo l) where
+    type Result (UniformTopologyInitializedTo l) = Tree l
+    dist_name _ = "uniform_topology_initialized_to"
+
+instance HasAnnotatedPdf (UniformTopologyInitializedTo l) where
+    annotated_densities (UniformTopologyInitializedTo topology) _ =
+        return ([uniformTopologyPr numLeaves], ())
+        where numLeaves = length $ leafNodes topology
+
+instance Sampleable (UniformTopologyInitializedTo l) where
+    sample dist@(UniformTopologyInitializedTo topology) =
+        RanDistribution3 dist uniformTopologyEffect triggeredModifiableTree (return topology)
+
+uniformTopologyInitializedTo :: Tree l -> UniformTopologyInitializedTo l
+uniformTopologyInitializedTo = UniformTopologyInitializedTo
+
 instance HasAnnotatedPdf UniformTopology where
     annotated_densities (UniformTopology n) _ = return ([uniformTopologyPr n], ())
 
@@ -122,6 +143,20 @@ fixedTopologyTree topology dist = do
   let tree = branchLengthTree topology branchLengths
   addLengthMoves 1 tree
   return tree
+
+-- | Initialize tree from loaded value with topology and branch length moves enabled
+initialTreeWithMoves :: WithBranchLengths (WithRoots (Tree l)) -> Random (WithBranchLengths (Tree l))
+initialTreeWithMoves (WithBranchLengths (WithRoots tree _ _) initialLengths) = do
+  topology <- RanSamplingRate 0 $ sample $ uniformTopologyInitializedTo tree
+  branchLengths <- RanSamplingRate 0 $ sample $ independent $
+                   getUEdgesSet topology & IntMap.fromSet (\edgeId ->
+                     let len = initialLengths IntMap.! edgeId
+                         shape = 100.0  -- High shape for tight distribution around loaded value
+                         scale = len / shape
+                     in gamma shape scale)
+  let modifiableTree = branchLengthTree topology branchLengths
+  addTreeMoves 1 modifiableTree
+  return modifiableTree
 
 uniformRootedTopology n = do
   topology <- sample $ uniformTopology n

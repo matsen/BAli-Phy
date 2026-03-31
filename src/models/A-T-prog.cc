@@ -308,9 +308,23 @@ do_block generate_main(const variables_map& args,
 		       const expression_ref& treeLogger,
 		       const expression_ref& model_fn,
 		       vector<tuple<int,expression_ref,expression_ref>>& alignment_loggers,
-		       vector<tuple<int,expression_ref,expression_ref>>& category_state_loggers)
+		       vector<tuple<int,expression_ref,expression_ref>>& category_state_loggers,
+		       const std::optional<std::string>& initial_tree_newick)
 {
     auto fixed = get_fixed(args);
+
+    // Validate initial-tree option conflicts
+    if (args.count("initial-tree"))
+    {
+        bool has_fix_tree = fixed.count("tree") || fixed.count("topology");
+        bool has_tree_prior = args.count("tree");
+
+        if (has_fix_tree)
+            throw myexception() << "--initial-tree cannot be used with --fix=tree or --fix=topology";
+
+        if (has_tree_prior)
+            throw myexception() << "--initial-tree cannot be used with --tree=<prior>";
+    }
 
     auto log_formats = get_log_formats(args, args.count("align"));
 
@@ -718,7 +732,8 @@ std::string generate_atmodel_program(const variables_map& args,
                                      const model_t& tree_model,
                                      const model_t& subst_rates_model,
                                      const model_t& indel_rates_model,
-                                     const std::vector<int>& like_calcs)
+                                     const std::vector<int>& like_calcs,
+                                     const std::optional<std::string>& initial_tree_newick)
 {
     auto fixed = get_fixed(args);
 
@@ -812,6 +827,16 @@ std::string generate_atmodel_program(const variables_map& args,
 
     model.empty_stmt();
 
+    // Load initial tree value if provided
+    if (initial_tree_newick)
+    {
+        model.perform(var("initialTreeValue"),
+                      {var("liftIO"),
+                       {var("newickToBranchLengthTree"),
+                        {var("parse_newick"), String(*initial_tree_newick)}}});
+        model.empty_stmt();
+    }
+
     // M4. Branch-length tree
     auto tree_var = var("tree");
     if (not fixed.count("tree"))
@@ -827,7 +852,10 @@ std::string generate_atmodel_program(const variables_map& args,
         auto code = tree_model.code;
 
         expression_ref E = var("sampleTree");
-        E = code.add_arguments(E,{{"taxa",taxon_names_var}});
+        std::map<std::string,expression_ref> args = {{"taxa",taxon_names_var}};
+        if (initial_tree_newick)
+            args["initialTreeValue"] = var("initialTreeValue");
+        E = code.add_arguments(E, args);
 
         tree_var = bind_and_log(false, var_name, E, code.is_action(), code.has_loggers(), model, model_loggers);
         branch_lengths = {var("branchLengths"), tree_var};
@@ -1129,7 +1157,8 @@ std::string generate_atmodel_program(const variables_map& args,
 			      treeLogger,
 			      model_fn,
 			      alignment_loggers,
-                              category_state_loggers);
+                              category_state_loggers,
+                              initial_tree_newick);
 
     program_file<<"\nmain = "<<main.get_expression().print()<<"\n";
 
@@ -1155,7 +1184,8 @@ gen_atmodel_program(const boost::program_options::variables_map& args,
 		    const model_t& tree_model,
 		    const model_t& subst_rates_model,
 		    const model_t& indel_rates_model,
-		    const std::vector<int>& like_calcs)
+		    const std::vector<int>& like_calcs,
+		    const std::optional<std::string>& initial_tree_newick)
 {
     // FIXME! Make likelihood_calculators for 1- and 2-sequence alignments handle compressed alignments.
     {
@@ -1171,7 +1201,8 @@ gen_atmodel_program(const boost::program_options::variables_map& args,
                                                tree_model,
                                                subst_rates_model,
                                                indel_rates_model,
-                                               like_calcs);
+                                               like_calcs,
+                                               initial_tree_newick);
     }
 
     auto m = L->load_module_from_file(program_filename);

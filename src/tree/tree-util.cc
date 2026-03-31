@@ -20,6 +20,7 @@
 #include <iostream>
 #include <map>
 #include <list>
+#include <cmath>
 #include "tree/tree-util.H"
 #include "util/myexception.H"
 #include "util/io.H"
@@ -305,6 +306,38 @@ bool extends(const Tree& T,const Tree& Q)
 
     vector<int> branch_map = extends_map(T,Q);
     return branch_map.size() != 0;
+}
+
+void validate_initial_tree_branch_lengths(const SequenceTree& tree)
+{
+    for (int b = 0; b < tree.n_branches(); b++)
+    {
+        auto branch = tree.directed_branch(b);
+        if (!branch.has_length())
+            throw myexception() << "Initial tree branch " << b << " has no branch length.\n"
+                               << "  All branches must have lengths.";
+
+        double len = branch.length();
+        if (len <= 1e-10)
+            throw myexception() << "Initial tree branch " << b << " has invalid length: " << len
+                               << "\n  All branch lengths must be positive (> 1e-10).";
+        if (std::isnan(len) || std::isinf(len))
+            throw myexception() << "Initial tree branch " << b << " has NaN/infinite length";
+    }
+}
+
+void validate_initial_tree_topology(const RootedSequenceTree& tree)
+{
+    unsigned root_degree = tree.root().degree();
+
+    if (root_degree != 3)
+        throw myexception() << "Initial tree has root node with degree " << root_degree << ".\n"
+                           << "  BAli-Phy requires rooted trees with root degree 3 for --initial-tree.\n"
+                           << "  This represents an unrooted binary tree with root placed on an internal branch.\n"
+                           << "  Root degree 2 (binary rooted tree) is not supported.\n"
+                           << "  Root degree 4+ (polytomy) is not supported.\n"
+                           << "  Example valid tree: (A,B,(C,D)); [root has degree 3]\n"
+                           << "  Example invalid tree: ((A,B),(C,D)); [root has degree 2]";
 }
 
 

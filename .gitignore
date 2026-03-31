@@ -2,7 +2,10 @@ doc/html
 doc/latex
 
 build*/
-subprojects/*/*
+# Ignore downloaded subprojects (packagecache stores downloaded files)
+subprojects/packagecache/
+subprojects/*-*/
+subprojects/.wraplock
 *.Main.hs
 history.txt
 win64-cross.txt
@@ -10,8 +13,17 @@ win64-cross.txt
 .vscode
 .cache/
 
+# User-specific files
+CLAUDE.md
+_ignore/
+_notes/
+
 #-------- Backups --------
 *.orig
-.#*        
+.#*
 *~
 \#*#
+
+# Installation directory (build output)
+install/
+install-linux/

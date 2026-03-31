@@ -870,7 +870,44 @@ create_A_and_T_model(const Rules& R, variables_map& args, const std::shared_ptr<
     //       The ONLY thing we use these alignments for is their alphabet.
     vector<alignment> A = read_alignments(filename_ranges, alphabet_names);
 
-    // 7. --- Check that all smodel-linked partitions end up with the same alphabet.
+    // 7. --- Load and validate initial tree
+    std::optional<std::string> initial_tree_newick;
+    if (args.count("initial-tree"))
+    {
+        auto tree_filename = args["initial-tree"].as<string>();
+
+        // Extract taxa from first alignment
+        auto taxa = sequence_names(A[0]);
+
+        // Load and convert to unrooted
+        RootedSequenceTree RT = load_tree_from_file(tree_filename);
+        SequenceTree initial_T = RT;
+
+        // Validate tree topology (must have root degree 3 for binary unrooted tree)
+        validate_initial_tree_topology(RT);
+
+        // Validate taxa match
+        try {
+            remap_T_leaf_indices(initial_T, taxa);
+        }
+        catch(const bad_mapping<string>& b) {
+            bad_mapping<string> b2 = b;
+            b2.clear();
+            if (b.from == 0)
+                b2 << "Initial tree leaf '" << b2.missing << "' not found in alignment.";
+            else
+                b2 << "Alignment sequence '" << b2.missing << "' not found in initial tree.";
+            throw b2;
+        }
+
+        // Validate branch lengths
+        validate_initial_tree_branch_lengths(initial_T);
+
+        // Convert to Newick string for passing to Haskell code generator
+        initial_tree_newick = initial_T.write(true);
+    }
+
+    // 8. --- Check that all smodel-linked partitions end up with the same alphabet.
     for(int i=0;i<smodel_names_mapping.n_unique_items();i++)
     {
 	int first_partition = smodel_names_mapping.partitions_for_item[i][0];
@@ -980,10 +1017,17 @@ create_A_and_T_model(const Rules& R, variables_map& args, const std::shared_ptr<
             M = args["tree"].as<string>();
         else if (fixed.count("topology"))
             M = "~fixed_topology_tree(topology)";
+        else if (args.count("initial-tree"))
+            M = "~initial_tree_with_moves(initialTreeValue)";
         else
             M = "~uniform_tree(taxa)";
 
-        tree_model = compile_model(R, TC, code_gen_state, tree_type, M, "tree model", {});
+        // Declare initialTreeValue variable if using initial-tree
+        std::vector<std::pair<std::string,ptree>> tree_vars;
+        if (args.count("initial-tree"))
+            tree_vars.push_back({"initialTreeValue", parse_type("Tree<Rooted<t>>")});
+
+        tree_model = compile_model(R, TC, code_gen_state, tree_type, M, "tree model", tree_vars);
         tree_type = tree_model.type;
     }
 
@@ -1096,7 +1140,8 @@ create_A_and_T_model(const Rules& R, variables_map& args, const std::shared_ptr<
                                     full_scale_models, scale_mapping,
                                     tree_model,
                                     subst_rates_model, indel_rates_model,
-                                    likelihood_calculators);
+                                    likelihood_calculators,
+                                    initial_tree_newick);
 
     return {std::move(prog), info};
 }
